@@ -34,3 +34,6 @@ class_name = "JobWorkflow"
 
 [triggers]
 crons = ["*/5 * * * *"]
+
+[placement]
+mode = "smart"
