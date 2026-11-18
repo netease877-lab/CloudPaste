@@ -10,6 +10,7 @@ import { ApiStatus, UserType } from "../../../constants/index.js";
 import { DriverError, NotFoundError, ValidationError } from "../../../http/errors.js";
 import { BaseDriver, CAPABILITIES } from "../../interfaces/capabilities/index.js";
 import { decryptIfNeeded } from "../../../utils/crypto.js";
+import { isCloudflareWorkerEnvironment } from "../../../utils/environmentUtils.js";
 import { buildFullProxyUrl } from "../../../constants/proxy.js";
 import { resolveOwner } from "../../fs/utils/OwnerResolver.js";
 import { buildFileInfo, inferNameFromPath } from "../../utils/FileInfoBuilder.js";
@@ -353,6 +354,10 @@ export class DiscordStorageDriver extends BaseDriver {
   }
 
   async _withDiscordConcurrency(fn) {
+    // Cloudflare Workers 禁止跨请求共享 Promise 队列，仅在 Node/Docker 进程内启用全局并发信号量
+    if (isCloudflareWorkerEnvironment()) {
+      return await fn();
+    }
     const sem = getDiscordSemaphore(this._getDiscordSemaphoreKey(), this.uploadConcurrency);
     const release = await sem.acquire();
     try {
