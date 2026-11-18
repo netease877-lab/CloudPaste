@@ -42,23 +42,18 @@ export const JobWorkflow = isCloudflareWorkers
 // ============ Cloudflare Workers 环境导出 ============
 // 默认导出 fetch，只在 Workers 环境下由 Cloudflare 调用；
 // 在 Node 环境下不会被使用
-let dbInitPromise = null;
+// 严禁在模块全局作用域缓存 Promise 实例，仅缓存已完成的布尔状态标志
+let isDbReady = false;
 
 async function ensureDbReadyOnce(env) {
-  if (dbInitPromise) return dbInitPromise;
+  if (isDbReady) return;
   if (!env?.DB) {
     throw new Error("DB 未绑定，请在 Cloudflare 绑定中配置 D1 数据库");
   }
 
-  dbInitPromise = ensureDatabaseReady({ db: env.DB, env });
-  try {
-    await dbInitPromise;
-  } catch (error) {
-    // 初始化失败时允许后续请求重试，避免一次失败后永久跳过
-    dbInitPromise = null;
-    throw error;
-  }
-  return dbInitPromise;
+  // 在当前请求的独立上下文中执行并 await，不跨请求共享 Promise
+  await ensureDatabaseReady({ db: env.DB, env });
+  isDbReady = true;
 }
 
 export default {
@@ -76,7 +71,7 @@ export default {
 
       await ensureDbReadyOnce(env);
 
-      return app.fetch(request, bindings, ctx);
+      return await app.fetch(request, bindings, ctx);
     } catch (error) {
       console.error("处理请求时发生错误:", error);
       return new Response(
@@ -125,8 +120,7 @@ if (!isCloudflareWorkers) {
       import("path"),
       import("fs"),
       import("url"),
-      // 动态字符串拼接避免 Wrangler esbuild 静态分析,Workers 环境不会执行此分支
-      import(`${"."}/src/adapters/SQLiteAdapter.js`),
+      import("./src/adapters/SQLiteAdapter.js"),
     ]);
 
     const __filename = fileURLToPath(import.meta.url);
@@ -145,8 +139,6 @@ if (!isCloudflareWorkers) {
     const bindings = {
       DB: sqliteAdapter,
       ENCRYPTION_SECRET: process.env.ENCRYPTION_SECRET,
-      TASK_DATABASE_PATH: dbPath,
-      TASK_WORKER_POOL_SIZE: Number(process.env.TASK_WORKER_POOL_SIZE) || 10,
     };
 
     if (!bindings.ENCRYPTION_SECRET) {
