@@ -1,3 +1,9 @@
+import { CleanupUploadSessionsTask } from "./tasks/CleanupUploadSessionsTask.js";
+import { ScheduledSyncCopyTask } from "./tasks/ScheduledSyncCopyTask.js";
+import { ScheduledFsIndexRebuildTask } from "./tasks/ScheduledFsIndexRebuildTask.js";
+import { ScheduledFsIndexApplyDirtyTask } from "./tasks/ScheduledFsIndexApplyDirtyTask.js";
+import { RefreshStorageUsageSnapshotsTask } from "./tasks/RefreshStorageUsageSnapshotsTask.js";
+
 /**
  * 调度任务注册表
  * - 管理后台调度作业（scheduled_jobs）的 handler
@@ -145,100 +151,16 @@ export const scheduledTaskRegistry = new ScheduledTaskRegistry();
  * - 注意：在应用启动阶段调用一次
  */
 export function registerScheduledHandlers() {
-  // 动态导入内建任务处理器，避免 Workers 打包阶段静态分析冲突
+  const builtinTaskCtors = [
+    CleanupUploadSessionsTask,
+    ScheduledSyncCopyTask,
+    ScheduledFsIndexRebuildTask,
+    ScheduledFsIndexApplyDirtyTask,
+    RefreshStorageUsageSnapshotsTask,
+  ];
 
-  // 1) upload_sessions 清理任务
-  import("./tasks/CleanupUploadSessionsTask.js")
-    .then((mod) => {
-      const TaskCtor = mod.CleanupUploadSessionsTask;
-      if (TaskCtor) {
-        const taskInstance = new TaskCtor();
-        scheduledTaskRegistry.register(taskInstance);
-        console.log(
-          `[ScheduledTaskRegistry] 成功注册调度任务: ${taskInstance.id}`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ScheduledTaskRegistry] 注册 CleanupUploadSessionsTask 失败:",
-        err,
-      );
-    });
-
-  // 2) 跨驱动同步任务（基于 copy Job 的单向同步）
-  import("./tasks/ScheduledSyncCopyTask.js")
-    .then((mod) => {
-      const TaskCtor = mod.ScheduledSyncCopyTask;
-      if (TaskCtor) {
-        const taskInstance = new TaskCtor();
-        scheduledTaskRegistry.register(taskInstance);
-        console.log(
-          `[ScheduledTaskRegistry] 成功注册调度任务: ${taskInstance.id}`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ScheduledTaskRegistry] 注册 ScheduledSyncCopyTask 失败:",
-        err,
-      );
-    });
-
-  // 3) FS 搜索索引重建（可选业务任务；不默认创建 scheduled_jobs 记录）
-  import("./tasks/ScheduledFsIndexRebuildTask.js")
-    .then((mod) => {
-      const TaskCtor = mod.ScheduledFsIndexRebuildTask;
-      if (TaskCtor) {
-        const taskInstance = new TaskCtor();
-        scheduledTaskRegistry.register(taskInstance);
-        console.log(
-          `[ScheduledTaskRegistry] 成功注册调度任务: ${taskInstance.id}`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ScheduledTaskRegistry] 注册 ScheduledFsIndexRebuildTask 失败:",
-        err,
-      );
-    });
-
-  // 4) FS 搜索索引 dirty 增量应用（可选业务任务；不默认创建 scheduled_jobs 记录）
-  import("./tasks/ScheduledFsIndexApplyDirtyTask.js")
-    .then((mod) => {
-      const TaskCtor = mod.ScheduledFsIndexApplyDirtyTask;
-      if (TaskCtor) {
-        const taskInstance = new TaskCtor();
-        scheduledTaskRegistry.register(taskInstance);
-        console.log(
-          `[ScheduledTaskRegistry] 成功注册调度任务: ${taskInstance.id}`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ScheduledTaskRegistry] 注册 ScheduledFsIndexApplyDirtyTask 失败:",
-        err,
-      );
-    });
-
-  // 5) 存储用量快照刷新（默认创建 scheduled_jobs 记录）
-  import("./tasks/RefreshStorageUsageSnapshotsTask.js")
-    .then((mod) => {
-      const TaskCtor = mod.RefreshStorageUsageSnapshotsTask;
-      if (TaskCtor) {
-        const taskInstance = new TaskCtor();
-        scheduledTaskRegistry.register(taskInstance);
-        console.log(
-          `[ScheduledTaskRegistry] 成功注册调度任务: ${taskInstance.id}`,
-        );
-      }
-    })
-    .catch((err) => {
-      console.warn(
-        "[ScheduledTaskRegistry] 注册 RefreshStorageUsageSnapshotsTask 失败:",
-        err,
-      );
-    });
+  for (const TaskCtor of builtinTaskCtors) {
+    const taskInstance = new TaskCtor();
+    scheduledTaskRegistry.register(taskInstance);
+  }
 }

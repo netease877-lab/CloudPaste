@@ -204,9 +204,10 @@ export class ProxySignatureService {
   async _getSystemSetting(key) {
     const cacheKey = `setting_${key}`;
 
-    // 检查缓存
-    if (this.configCache.has(cacheKey)) {
-      return this.configCache.get(cacheKey);
+    // 检查缓存（基于时间戳校验 5 分钟 TTL，避免在 Workers 中遗留悬空 setTimeout）
+    const cached = this.configCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
     }
 
     try {
@@ -214,8 +215,7 @@ export class ProxySignatureService {
       const value = setting ? setting.value : "";
 
       // 缓存5分钟
-      this.configCache.set(cacheKey, value);
-      setTimeout(() => this.configCache.delete(cacheKey), 5 * 60 * 1000);
+      this.configCache.set(cacheKey, { value, expiresAt: Date.now() + 5 * 60 * 1000 });
 
       return value;
     } catch (error) {

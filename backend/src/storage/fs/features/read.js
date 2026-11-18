@@ -5,10 +5,6 @@ import { generateFileLink as featureGenerateFileLink } from "./presign.js";
 import { normalizePath } from "../utils/PathResolver.js";
 import { directoryCacheManager } from "../../../cache/index.js";
 
-// 同一目录同一时刻只允许一次真实 list（防止并发把存储打爆）
-// key = mountId:subPath:(refresh?1:0)
-const inflightDirectoryList = new Map();
-
 const cloneDirectoryResult = (result) => {
   if (!result || typeof result !== "object") return result;
   const items = Array.isArray(result.items) ? result.items : [];
@@ -64,8 +60,6 @@ export async function listDirectory(fs, path, userIdOrInfo, userType, options = 
   }
   const isPagedRequest = paged || !!pageCursor || pageLimit != null;
 
-  const inflightKey = `${mount?.id}:${cacheSubPath}:${refresh ? "1" : "0"}:${isPagedRequest ? "paged" : "full"}:${paged ? "1" : "0"}:${pageCursor || ""}:${pageLimit || ""}`;
-
   // 1) 不 refresh：先读缓存
   if (cacheEnabled && !refresh && !isPagedRequest) {
     const cached = directoryCacheManager.get(mount.id, cacheSubPath);
@@ -94,67 +88,50 @@ export async function listDirectory(fs, path, userIdOrInfo, userType, options = 
     });
   }
 
-  // 2) singleflight 去重：同目录并发只打一次存储
-  if (inflightDirectoryList.has(inflightKey)) {
-    if (cacheTrace) {
-      console.log("[DirectoryCache] INFLIGHT", { mountId: mount?.id, path: dirPath, subPath: cacheSubPath, refresh });
+  // 2) 在当前请求的独立上下文中拉取目录列表（不跨请求共享 Promise）
+  const startedAt = Date.now();
+  const result = await driver.listDirectory(cacheSubPath, {
+    path: dirPath,
+    mount,
+    subPath: cacheSubPath,
+    db: fs.mountManager.db,
+    ...options,
+    cursor: pageCursor,
+    limit: pageLimit,
+    userIdOrInfo,
+    userType,
+    // refresh 只负责“本次请求绕过缓存”，不做“提前清缓存”
+    refresh,
+  });
+
+  // 3) list 完成后更新缓存（refresh 也会写回缓存）
+  if (cacheEnabled && !isPagedRequest) {
+    const items = Array.isArray(result?.items) ? result.items : [];
+    if (items.length > 0) {
+      directoryCacheManager.set(mount.id, cacheSubPath, cloneDirectoryResult(result), cacheTtl);
+    } else {
+      // 空目录：不缓存空数组，并递归清掉该目录子树缓存，避免“幽灵目录/幽灵文件”残留
+      directoryCacheManager.invalidatePathTree(mount.id, cacheSubPath);
     }
-    return await inflightDirectoryList.get(inflightKey);
   }
 
-  const fetchPromise = (async () => {
-    const startedAt = Date.now();
-    const result = await driver.listDirectory(cacheSubPath, {
+  if (cacheTrace) {
+    const durationMs = Date.now() - startedAt;
+    const items = Array.isArray(result?.items) ? result.items : [];
+    console.log("[DirectoryCache] FETCHED", {
+      mountId: mount?.id,
       path: dirPath,
-      mount,
       subPath: cacheSubPath,
-      db: fs.mountManager.db,
-      ...options,
-      cursor: pageCursor,
-      limit: pageLimit,
-      userIdOrInfo,
-      userType,
-      // refresh 只负责“本次请求绕过缓存”，不做“提前清缓存”
       refresh,
+      cacheEnabled,
+      ttl: cacheTtl,
+      items: items.length,
+      durationMs,
     });
+  }
 
-    // 3) list 完成后更新缓存（refresh 也会写回缓存）
-    if (cacheEnabled && !isPagedRequest) {
-      const items = Array.isArray(result?.items) ? result.items : [];
-      if (items.length > 0) {
-        directoryCacheManager.set(mount.id, cacheSubPath, cloneDirectoryResult(result), cacheTtl);
-      } else {
-        // 空目录：不缓存空数组，并递归清掉该目录子树缓存，避免“幽灵目录/幽灵文件”残留
-        directoryCacheManager.invalidatePathTree(mount.id, cacheSubPath);
-      }
-    }
-
-    if (cacheTrace) {
-      const durationMs = Date.now() - startedAt;
-      const items = Array.isArray(result?.items) ? result.items : [];
-      console.log("[DirectoryCache] FETCHED", {
-        mountId: mount?.id,
-        path: dirPath,
-        subPath: cacheSubPath,
-        refresh,
-        cacheEnabled,
-        ttl: cacheTtl,
-        items: items.length,
-        durationMs,
-      });
-    }
-
-    // 返回值也统一 clone，避免：
-    // - 多个并发请求共享同一个 result 引用而互相污染
-    // - 上层 enrich/排序直接修改到缓存对象
-    return cloneDirectoryResult(result);
-  })()
-    .finally(() => {
-      inflightDirectoryList.delete(inflightKey);
-    });
-
-  inflightDirectoryList.set(inflightKey, fetchPromise);
-  return await fetchPromise;
+  // 返回值也统一 clone，避免上层 enrich/排序直接修改到缓存对象
+  return cloneDirectoryResult(result);
 }
 
 export async function getFileInfo(fs, path, userIdOrInfo, userType, request = null) {
