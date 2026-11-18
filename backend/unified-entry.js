@@ -120,7 +120,8 @@ if (!isCloudflareWorkers) {
       import("path"),
       import("fs"),
       import("url"),
-      import("./src/adapters/SQLiteAdapter.js"),
+      // 动态字符串拼接避免 Wrangler esbuild 静态分析,Workers 环境不会执行此分支
+      import(`${"."}/src/adapters/SQLiteAdapter.js`),
     ]);
 
     const __filename = fileURLToPath(import.meta.url);
@@ -139,6 +140,8 @@ if (!isCloudflareWorkers) {
     const bindings = {
       DB: sqliteAdapter,
       ENCRYPTION_SECRET: process.env.ENCRYPTION_SECRET,
+      TASK_DATABASE_PATH: dbPath,
+      TASK_WORKER_POOL_SIZE: Number(process.env.TASK_WORKER_POOL_SIZE) || 10,
     };
 
     if (!bindings.ENCRYPTION_SECRET) {
