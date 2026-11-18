@@ -50,107 +50,6 @@ const normalizeSummarySource = (raw) => {
   return null;
 };
 
-// 目录摘要计算（compute）singleflight：同一 mount + 同一路径 + 同一用户上下文并发时只算一次。
-// 目的：避免 TTL 较短或多人同时刷新导致“递归遍历”被放大成 N 倍。
-const inflightFolderSummaryCompute = new Map();
-
-const buildFolderSummaryComputeUserKey = (userIdOrInfo, userType) => {
-  const typeKey = userType != null ? String(userType) : "";
-  let idKey = "";
-  if (typeof userIdOrInfo === "string" || typeof userIdOrInfo === "number") {
-    idKey = String(userIdOrInfo);
-  } else if (userIdOrInfo && typeof userIdOrInfo === "object" && userIdOrInfo.id != null) {
-    idKey = String(userIdOrInfo.id);
-  }
-  return `${typeKey}:${idKey}`;
-};
-
-const computeFolderSummaryByTraversalSingleflight = async (mountId, dirPath, fileSystem, userIdOrInfo, userType, options = {}) => {
-  const mountKey = mountId != null ? String(mountId) : "";
-  const dirKey = normalizeDir(dirPath);
-  const userKey = buildFolderSummaryComputeUserKey(userIdOrInfo, userType);
-  const baseKey = `${mountKey}::${userKey}::${dirKey}`;
-
-  // refresh=true 必须“更强”：不能复用 refresh=false 的 inflight（可能是旧的）
-  // refresh=false 可以复用 refresh=true 的 inflight（因为更“新”）
-  const refreshKey = `${baseKey}::refresh`;
-  const normalKey = `${baseKey}::normal`;
-  const key = options?.refresh ? refreshKey : inflightFolderSummaryCompute.has(refreshKey) ? refreshKey : normalKey;
-
-  let inflight = inflightFolderSummaryCompute.get(key);
-  if (!inflight) {
-    inflight = (async () => {
-      try {
-        return await computeFolderSummaryByTraversal(fileSystem, dirKey, userIdOrInfo, userType, options);
-      } finally {
-        inflightFolderSummaryCompute.delete(key);
-      }
-    })();
-    inflightFolderSummaryCompute.set(key, inflight);
-  }
-
-  return inflight;
-};
-
-// computeDirectChildDirSummaries 输出结果依赖 childDirNameToFsPath（它决定“要算哪些子目录”）。
-// 因此 key 里必须包含“子目录名集合”的 hash，避免不同请求之间复用错误结果。
-const inflightDirectChildDirSummaries = new Map();
-
-const hashChildDirNameSet = (childDirNameToFsPath) => {
-  let hash = 0x811c9dc5;
-  const names = Array.from(childDirNameToFsPath?.keys?.() ?? []);
-  names.sort();
-  for (const name of names) {
-    const str = typeof name === "string" ? name : String(name ?? "");
-    for (let i = 0; i < str.length; i += 1) {
-      hash ^= str.charCodeAt(i);
-      hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
-    }
-    // separator
-    hash ^= 124; // '|'
-    hash = (hash + ((hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24))) >>> 0;
-  }
-  return (hash >>> 0).toString(16);
-};
-
-const computeDirectChildDirSummariesSingleflight = async (
-  mountId,
-  relativeSubPath,
-  childDirNameToFsPath,
-  directoryOps,
-  userIdOrInfo,
-  userType,
-  options = {}
-) => {
-  const mountKey = mountId != null ? String(mountId) : "";
-  const subKey = typeof relativeSubPath === "string" ? relativeSubPath : String(relativeSubPath ?? "");
-  const userKey = buildFolderSummaryComputeUserKey(userIdOrInfo, userType);
-  const nameSetHash = hashChildDirNameSet(childDirNameToFsPath);
-  const baseKey = `${mountKey}::${userKey}::${subKey}::${nameSetHash}`;
-
-  // refresh=true 不能复用 refresh=false 的 inflight（可能是旧的）；refresh=false 可复用 refresh=true 的 inflight（更“新”）
-  const refreshKey = `${baseKey}::refresh`;
-  const normalKey = `${baseKey}::normal`;
-  const key = options?.refresh ? refreshKey : inflightDirectChildDirSummaries.has(refreshKey) ? refreshKey : normalKey;
-
-  let inflight = inflightDirectChildDirSummaries.get(key);
-  if (!inflight) {
-    inflight = (async () => {
-      try {
-        if (!directoryOps || typeof directoryOps.computeDirectChildDirSummaries !== "function") {
-          return { results: new Map(), completed: false, visited: 0 };
-        }
-        return await directoryOps.computeDirectChildDirSummaries(subKey, childDirNameToFsPath, options);
-      } finally {
-        inflightDirectChildDirSummaries.delete(key);
-      }
-    })();
-    inflightDirectChildDirSummaries.set(key, inflight);
-  }
-
-  return inflight;
-};
-
 /**
  * 递归遍历目录计算摘要（可选能力）
  * - 只用于“目录”的 size/modified 缺失兜底
@@ -330,13 +229,9 @@ const enrichDirectoryListWithFolderSummaries = async ({ db, fileSystem, result, 
             ? normalizedDirPath.slice(normalizedMountPath.length) || "/"
             : normalizedDirPath;
 
-        const { results: computedMap } = await computeDirectChildDirSummariesSingleflight(
-          mountId,
+        const { results: computedMap } = await directoryOps.computeDirectChildDirSummaries(
           relativeSubPath,
           childDirNameToPath,
-          directoryOps,
-          userIdOrInfo,
-          userType,
           { refresh }
         );
 
@@ -387,7 +282,7 @@ const enrichDirectoryListWithFolderSummaries = async ({ db, fileSystem, result, 
         }
       }
 
-      const computed = await computeFolderSummaryByTraversalSingleflight(mountId, item.path, fileSystem, userIdOrInfo, userType, { refresh });
+      const computed = await computeFolderSummaryByTraversal(fileSystem, normalizeDir(item.path), userIdOrInfo, userType, { refresh });
       const computedEntry = {
         ...computed,
         size_source: isValidSize(computed.size) ? "compute" : undefined,
