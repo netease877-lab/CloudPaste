@@ -183,7 +183,6 @@ export async function huggingFaceDatasetsTestConnection(config, encryptionSecret
         _revision: revision,
         _token: token,
         _refsCache: { expiresAt: 0, branches: new Set(), tags: new Set(), fetchedAt: null },
-        _refsInflight: null,
         _fetchJson: async (url, init = {}) => {
           const res = await fetchJson(url, token, init);
           if (!res.resp.ok) {

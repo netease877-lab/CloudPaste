@@ -12,6 +12,7 @@
 import { ApiStatus } from "../../../constants/index.js";
 import { DriverError, ValidationError } from "../../../http/errors.js";
 import { VfsNodesRepository, VFS_ROOT_PARENT_ID } from "../../../repositories/VfsNodesRepository.js";
+import { isCloudflareWorkerEnvironment } from "../../../utils/environmentUtils.js";
 
 // =========================
 // 1) 工具函数
@@ -156,6 +157,10 @@ function getTelegramSemaphoreKey(driver) {
 }
 
 async function withTelegramConcurrency(driver, fn) {
+  // Cloudflare Workers 禁止跨请求共享 Promise 队列，仅在 Node/Docker 进程内启用全局并发信号量
+  if (isCloudflareWorkerEnvironment()) {
+    return await fn();
+  }
   const sem = getUploadSemaphore(getTelegramSemaphoreKey(driver), driver?.uploadConcurrency);
   const release = await sem.acquire();
   try {
