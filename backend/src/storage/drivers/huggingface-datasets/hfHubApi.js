@@ -372,45 +372,36 @@ export async function getRefs(driver) {
   if (driver._refsCache && driver._refsCache.expiresAt > now) {
     return { branches: driver._refsCache.branches, tags: driver._refsCache.tags };
   }
-  if (driver._refsInflight) return await driver._refsInflight;
 
-  driver._refsInflight = (async () => {
-    try {
-      const url = buildRefsApiUrl({ endpointBase: driver._endpointBase, repoParts: driver._repoParts }, { includePrs: false });
-      const json = await driver._fetchJson(url, {
-        method: "GET",
-        headers: buildAuthHeaders(driver._token, { Accept: "application/json" }),
-      });
+  const url = buildRefsApiUrl({ endpointBase: driver._endpointBase, repoParts: driver._repoParts }, { includePrs: false });
+  const json = await driver._fetchJson(url, {
+    method: "GET",
+    headers: buildAuthHeaders(driver._token, { Accept: "application/json" }),
+  });
 
-      const branches = new Set();
-      const tags = new Set();
+  const branches = new Set();
+  const tags = new Set();
 
-      const rawBranches = Array.isArray(json?.branches) ? json.branches : [];
-      const rawTags = Array.isArray(json?.tags) ? json.tags : [];
+  const rawBranches = Array.isArray(json?.branches) ? json.branches : [];
+  const rawTags = Array.isArray(json?.tags) ? json.tags : [];
 
-      for (const b of rawBranches) {
-        const name = b?.name ? String(b.name) : "";
-        if (name) branches.add(name);
-      }
-      for (const t of rawTags) {
-        const name = t?.name ? String(t.name) : "";
-        if (name) tags.add(name);
-      }
+  for (const b of rawBranches) {
+    const name = b?.name ? String(b.name) : "";
+    if (name) branches.add(name);
+  }
+  for (const t of rawTags) {
+    const name = t?.name ? String(t.name) : "";
+    if (name) tags.add(name);
+  }
 
-      driver._refsCache = {
-        expiresAt: now + REFS_CACHE_TTL_MS,
-        branches,
-        tags,
-        fetchedAt: new Date().toISOString(),
-      };
+  driver._refsCache = {
+    expiresAt: now + REFS_CACHE_TTL_MS,
+    branches,
+    tags,
+    fetchedAt: new Date().toISOString(),
+  };
 
-      return { branches, tags };
-    } finally {
-      driver._refsInflight = null;
-    }
-  })();
-
-  return await driver._refsInflight;
+  return { branches, tags };
 }
 
 export async function getRevisionKind(driver, revision) {
