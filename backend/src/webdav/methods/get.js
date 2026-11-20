@@ -133,7 +133,7 @@ export async function handleGet(c, path, userId, userType, db) {
           headers: {
             ETag: etag,
             "Last-Modified": lastModifiedStr,
-            "Cache-Control": "max-age=3600",
+            "Cache-Control": "max-age=60",
           },
         });
       }
@@ -155,7 +155,7 @@ export async function handleGet(c, path, userId, userType, db) {
             headers: {
               ETag: etag,
               "Last-Modified": lastModifiedStr,
-              "Cache-Control": "max-age=3600",
+              "Cache-Control": "max-age=60",
             },
           });
         }
