@@ -291,7 +291,7 @@ export function buildResponseHeaders(descriptor, range, channel) {
       break;
     case "proxy":
     case "share":
-      headers.set("Cache-Control", "public, max-age=3600");
+      headers.set("Cache-Control", "public, max-age=60, s-maxage=60");
       break;
     default:
       // internal channels: no cache headers
