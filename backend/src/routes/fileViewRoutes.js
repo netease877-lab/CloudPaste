@@ -31,6 +31,7 @@ async function handleShareDelivery(c, { forceDownload, forceProxy }) {
   // 统一从文件记录出发做密码与过期校验，避免直链路径绕过密码保护
   const file = await getFileBySlug(db, slug, encryptionSecret);
   if (!file) {
+    c.header("Cache-Control", "no-store");
     throw new NotFoundError("文件不存在");
   }
 
@@ -49,6 +50,7 @@ async function handleShareDelivery(c, { forceDownload, forceProxy }) {
 
   const accessCheck = await isFileAccessible(db, file, encryptionSecret);
   if (!accessCheck.accessible) {
+    c.header("Cache-Control", "no-store");
     if (accessCheck.reason === "expired") {
       await checkAndDeleteExpiredFile(db, file, encryptionSecret, repositoryFactory);
       throw new AppError("文件已过期", { status: ApiStatus.GONE, code: "GONE", expose: true });
@@ -56,9 +58,17 @@ async function handleShareDelivery(c, { forceDownload, forceProxy }) {
     throw new AuthorizationError("文件不可访问");
   }
 
-  return handleFileDownload(slug, db, encryptionSecret, c.req.raw, forceDownload, repositoryFactory, {
+  const response = await handleFileDownload(slug, db, encryptionSecret, c.req.raw, forceDownload, repositoryFactory, {
     forceProxy: !!forceProxy,
   });
+
+  if (response && (response.status === 404 || response.status === 410)) {
+    response.headers.set("Cache-Control", "no-store");
+    response.headers.delete("ETag");
+    response.headers.delete("Last-Modified");
+  }
+
+  return response;
 }
 
 // Share 本地代理入口 /api/s/:slug（等价 FS 的 /api/p）
