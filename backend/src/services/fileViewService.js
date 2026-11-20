@@ -77,7 +77,7 @@ export class FileViewService {
 
       // 检查文件是否存在
       if (!file) {
-        return new Response("文件不存在", { status: 404 });
+        return new Response("文件不存在", { status: 404, headers: { "Cache-Control": "no-store" } });
       }
 
       // 检查文件是否受密码保护
@@ -101,9 +101,9 @@ export class FileViewService {
       const accessCheck = await isFileAccessible(this.db, file, this.encryptionSecret);
       if (!accessCheck.accessible) {
         if (accessCheck.reason === "expired") {
-          return new Response("文件已过期", { status: 410 });
+          return new Response("文件已过期", { status: 410, headers: { "Cache-Control": "no-store" } });
         }
-        return new Response("文件不可访问", { status: 403 });
+        return new Response("文件不可访问", { status: 403, headers: { "Cache-Control": "no-store" } });
       }
 
       // 文件预览和下载端点默认不增加访问计数
@@ -124,12 +124,12 @@ export class FileViewService {
         } catch (error) {
           console.error(`尝试再次删除文件(${file.id})时出错:`, error);
         }
-        return new Response("文件已达到最大查看次数", { status: 410 });
+        return new Response("文件已达到最大查看次数", { status: 410, headers: { "Cache-Control": "no-store" } });
       }
 
       // 检查文件存储信息
       if (!result.file.storage_config_id || !result.file.storage_path || !result.file.storage_type) {
-        return new Response("文件存储信息不完整", { status: 404 });
+        return new Response("文件存储信息不完整", { status: 404, headers: { "Cache-Control": "no-store" } });
       }
 
       const fileRecord = result.file;
@@ -172,6 +172,15 @@ export class FileViewService {
           encryptionSecret: this.encryptionSecret,
         });
 
+        const buildFallbackEtag = (descriptor) => {
+          const fileSize = descriptor?.size ?? fileRecord.size ?? 0;
+          const lastMod =
+            descriptor?.lastModified instanceof Date && !Number.isNaN(descriptor.lastModified.getTime())
+              ? descriptor.lastModified.getTime()
+              : (fileRecord.updated_at || fileRecord.created_at || "");
+          return `"${slug}-${fileSize}-${lastMod}"`;
+        };
+
         const response = await streaming.createResponse({
           path: fileRecord.storage_path,
           channel: STREAMING_CHANNELS.SHARE,
@@ -180,8 +189,30 @@ export class FileViewService {
           request,
           db: this.db,
           repositoryFactory: this.repositoryFactory,
+          ...(!rangeHeader ? { buildFallbackEtag } : null),
           ...(owner ? owner : null),
         });
+
+        // 404 / 410 不允许被边缘缓存，移除 ETag / Last-Modified 并保持原错误响应
+        if (response.status === 404 || response.status === 410) {
+          response.headers.set("Cache-Control", "no-store");
+          response.headers.delete("ETag");
+          response.headers.delete("Last-Modified");
+          response.headers.delete("Set-Cookie");
+          return response;
+        }
+
+        // 304 Not Modified：不设置实体头，确保无 Content-Length 且携带 60s 边缘缓存策略
+        if (response.status === 304) {
+          response.headers.set("Cache-Control", "public, max-age=60, s-maxage=60");
+          response.headers.delete("Content-Length");
+          response.headers.delete("Set-Cookie");
+          response.headers.set("Access-Control-Allow-Origin", "*");
+          response.headers.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+          response.headers.set("Access-Control-Allow-Headers", "Range, Content-Type");
+          response.headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
+          return response;
+        }
 
         // 基于文件记录重新计算 Content-Type / Content-Disposition，保持分享层一致性
         const { contentType: finalContentType, contentDisposition } = getContentTypeAndDisposition(
@@ -193,6 +224,13 @@ export class FileViewService {
         // 更新响应头
         response.headers.set("Content-Type", finalContentType);
         response.headers.set("Content-Disposition", contentDisposition);
+
+        // 非 Range 的 200 响应兜底确保存在 ETag
+        if (response.status === 200 && !rangeHeader && !response.headers.get("ETag")) {
+          const contentLength = response.headers.get("Content-Length") ?? fileRecord.size ?? 0;
+          const lastModified = response.headers.get("Last-Modified") ?? fileRecord.updated_at ?? fileRecord.created_at ?? "";
+          response.headers.set("ETag", `"${slug}-${contentLength}-${lastModified}"`);
+        }
 
         // 设置CORS头部
         response.headers.set("Access-Control-Allow-Origin", "*");
