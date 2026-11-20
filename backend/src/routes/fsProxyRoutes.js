@@ -378,6 +378,9 @@ fsProxyRoutes.get(`${PROXY_CONFIG.ROUTE_PREFIX}/*`, async (c) => {
       c.header("Content-Disposition", downloadDisposition);
     }
 
+    // 删除 Set-Cookie 头，确保 Cloudflare 边缘可以缓存 proxy 通道响应
+    response.headers.delete("Set-Cookie");
+
     // 复制响应头到 Hono context（用于 CORS 中间件）
     for (const [key, value] of response.headers.entries()) {
       if (!["access-control-allow-origin", "access-control-allow-credentials", "access-control-expose-headers"].includes(key.toLowerCase())) {
