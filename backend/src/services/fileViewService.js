@@ -200,6 +200,9 @@ export class FileViewService {
         response.headers.set("Access-Control-Allow-Headers", "Range, Content-Type");
         response.headers.set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges");
 
+        // 删除 Set-Cookie 头，确保 Cloudflare 边缘可以缓存该响应
+        response.headers.delete("Set-Cookie");
+
         return response;
       };
 
