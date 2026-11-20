@@ -87,13 +87,13 @@ export class FileViewService {
         const passwordParam = url.searchParams.get("password");
 
         if (!passwordParam) {
-          return new Response("需要密码访问此文件", { status: 401 });
+          return new Response("需要密码访问此文件", { status: 401, headers: { "Cache-Control": "no-store" } });
         }
 
         // 验证密码
         const passwordValid = await verifyPassword(passwordParam, file.password);
         if (!passwordValid) {
-          return new Response("密码错误", { status: 401 });
+          return new Response("密码错误", { status: 401, headers: { "Cache-Control": "no-store" } });
         }
       }
 
@@ -193,8 +193,8 @@ export class FileViewService {
           ...(owner ? owner : null),
         });
 
-        // 404 / 410 不允许被边缘缓存，移除 ETag / Last-Modified 并保持原错误响应
-        if (response.status === 404 || response.status === 410) {
+        // 非成功响应（401 / 403 / 404 / 410 / 5xx 等）均不允许被边缘缓存，移除 ETag / Last-Modified 并保持原错误响应
+        if (response.status >= 400) {
           response.headers.set("Cache-Control", "no-store");
           response.headers.delete("ETag");
           response.headers.delete("Last-Modified");
@@ -285,7 +285,7 @@ export class FileViewService {
       return await proxyDownload();
     } catch (error) {
       console.error("代理文件下载出错:", error);
-      return new Response("获取文件失败: " + error.message, { status: 500 });
+      return new Response("获取文件失败: " + error.message, { status: 500, headers: { "Cache-Control": "no-store" } });
     }
   }
 }
