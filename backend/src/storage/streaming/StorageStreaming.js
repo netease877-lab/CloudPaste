@@ -305,6 +305,21 @@ export class StorageStreaming {
       /** @type {StorageStreamDescriptor} */
       const descriptor = this._adaptToDescriptor(downloadResult);
 
+      // Share 通道（非 Range 请求）：确保存在合法的 ETag，供响应头与 304 条件校验复用
+      if (channel === STREAMING_CHANNELS.SHARE && !rangeHeader) {
+        if (descriptor.etag) {
+          const rawEtag = String(descriptor.etag).trim();
+          if (rawEtag && !rawEtag.startsWith('"') && !rawEtag.startsWith('W/"')) {
+            descriptor.etag = `"${rawEtag}"`;
+          }
+        } else if (typeof options.buildFallbackEtag === "function") {
+          const fallbackEtag = options.buildFallbackEtag(descriptor);
+          if (fallbackEtag) {
+            descriptor.etag = fallbackEtag;
+          }
+        }
+      }
+
       // 3. 评估条件请求
       const { shouldReturn304, shouldReturn412 } = evaluateConditionalHeaders(request, descriptor.etag, descriptor.lastModified);
 
